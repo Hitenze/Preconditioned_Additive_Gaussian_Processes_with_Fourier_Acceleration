@@ -1,0 +1,23 @@
+.DS_Store
+
+# MATLAB files
+*.asv
+*.aut
+*.m~ 
+*.mlapp
+*.mlappinstall
+*.slx
+*.mdl
+*.mat
+*.fig
+*.p
+*.mex*
+
+# C files
+*.o
+*.obj
+*.ex
+*.exe
+*.out
+*.a
+*.so
