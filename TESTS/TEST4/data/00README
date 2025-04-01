@@ -1,0 +1,9 @@
+Due to size limit, we are only able to provide poletele dataset and the window for other datasets.
+
+Elevators dataset and preprossing is available at https://github.com/cornellius-gp/gpytorch/blob/9551eba889adf835b69cfd86e9a5d584fb61cdcc/examples/02_Scalable_Exact_GPs/SGPR_Regression_CUDA.ipynb
+
+Data preporsessing of other datasets can be done following https://github.com/ant-stephenson/gpnn-experiments/blob/main/experiments/benchmarks/preprocessing_uci.py
+
+Modify phase_data_all.py to generate data files.
+
+See TEST2 and TEST3 for sample format

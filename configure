@@ -1,0 +1,214 @@
+USING_OPENMP=0
+USING_OPENBLAS=0
+USING_MKL=0
+USING_NFFT=1
+
+NFFTGP_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+FLAGS="-DUNIX -O0 -Wall -Wno-unused-function -Wno-unused-variable -fPIC -std=gnu11 -march=native -g"
+FLAGSCPP="-DUNIX -O0 -Wall -Wno-unused-function -Wno-unused-variable -fPIC -std=c++14 -march=native -g"
+
+extract_value() {
+	echo "$1" | cut -d '=' -f 2
+}
+
+for arg in "$@"
+do
+	case $arg in
+		--with-openblas) USING_OPENBLAS=1 ;;
+		--with-mkl) USING_MKL=1 ;;
+		--with-openmp) USING_OPENMP=1 ;;
+		CC=*) CC=$(extract_value $arg) ;;
+		CXX=*) CXX=$(extract_value $arg) ;;
+		FC=*) FC=$(extract_value $arg) ;;
+		OPENBLAS_PATH=*) OPENBLAS_PATH=$(extract_value $arg) ;;
+		NFFT_PATH=*) NFFT_PATH=$(extract_value $arg) ;;
+		FFTW_PATH=*) FFTW_PATH=$(extract_value $arg) ;;
+		*) ;;
+	esac
+	shift
+done
+
+# Check if NFFT is available
+NFFT_PATH=${NFFT_PATH:-$(find "$NFFTGP_DIR/../nfft" "$NFFTGP_DIR/../../nfft" -maxdepth 1 -type d \( -name "build" -o -name "install" \) -print -quit 2>/dev/null)}
+echo "NFFT_PATH: $NFFT_PATH"
+if [ ! -z "$NFFT_PATH" ] && [ -d "$NFFT_PATH" ] && [ -d "$NFFT_PATH/include" ] && [ -d "$NFFT_PATH/lib" ] && [ -f "$NFFT_PATH/../applications/fastsum/fastsum.o" ]; then
+	NFFT_INSTALL_PATH="$NFFT_PATH"
+	NFFT_PATH="$NFFT_PATH/../"
+	echo "NFFT applications detected at $NFFT_PATH, installation detected at $NFFT_INSTALL_PATH, enable NFFT."
+	USING_NFFT=1
+	# otherwise the lib and include directories might be in /usr/local/bin and /usr/local/include
+	# we need to check if there are libnfft3.* and nfft3.h in those directories
+else
+	NFFT_PATH=${NFFT_PATH:-"$NFFTGP_DIR/../nfft"}
+	if [ ! -z "$NFFT_PATH"] && [ -f "$/usr/local/lib/libnfft3.*" ] && [ -f "$/usr/local/include/nfft3.h" ] && [ -f "$/usr/local/../applications/fastsum/fastsum.o" ]; then
+		NFFT_INSTALL_PATH="/usr/local"
+		echo "NFFT applications detected at $NFFT_PATH, installation detected at $NFFT_INSTALL_PATH, enable NFFT."
+		USING_NFFT=1
+	else
+		echo "NFFT not detected, disable NFFT."
+		USING_NFFT=0
+	fi
+fi
+
+# if USING_NFFT=1, need to find libfftw3, might be in /usr/lib/[environment, like x86_64-linux-gnu]/libfftw3.*
+# or if Macos in /opt/homebrew/Cellar/fftw/[version number]/lib/libfftw3.*
+# search for file, and if found, set FFTW_PATH, otherwise desable USING_NFFT
+FFTW_PATH=${FFTW_PATH:-$(dirname $(find "/usr/lib/" "/usr/local/lib/" "/opt/homebrew/Cellar/fftw/" -type f -name 'libfftw3.*' -print -quit 2>/dev/null))}
+if [ ! -z "$FFTW_PATH" ]; then
+	echo "FFTW detected at $FFTW_PATH, enable NFFT."
+	USING_NFFT=1
+else
+	echo "FFTW not detected, disable NFFT."
+	USING_NFFT=0
+fi
+
+# Check if MKL is available when set to use MKL
+if [ "$USING_MKL" -eq 1 ]; then
+	if [ -z "$(which icc)" ] || [ -z "$(which icpc)" ] || [ -z "$(which ifort)" ]; then
+		echo "MKL: not found."
+		USING_MKL=0
+	else
+	 	if [ ! -z "$MKLROOT" ]; then
+			echo "MKL detected at $MKLROOT, enable MKL."
+			USING_OPENBLAS=0
+			USING_OPENMP=1
+		else
+			echo "MKL: not found. please set MKLROOT environment variable."
+			USING_MKL=0
+		fi
+	fi
+fi
+
+# if MKL is available we manually set USING_OPENBLAS to 0, wo this check is valid
+if [ "$USING_OPENBLAS" -eq 1 ]; then
+	OPENBLAS_PATH=${OPENBLAS_PATH:-$(find "/opt/OpenBLAS" "$NFFTGP_DIR/../openblas" "$NFFTGP_DIR/../../OpenBLAS" "$NFFTGP_DIR/../../OpenBLAS-git" -maxdepth 1 -type d \( -name "build" -o -name "install" \) -print -quit 2>/dev/null)}
+	if [ ! -z "$OPENBLAS_PATH" ] && [ -d "$OPENBLAS_PATH" ] && [ -d "$OPENBLAS_PATH/include" ] && [ -d "$OPENBLAS_PATH/lib" ]; then
+		echo "OpenBLAS detected at $OPENBLAS_PATH, enable OpenBLAS."
+		USING_MKL=0
+		USING_OPENBLAS=1
+		USING_OPENMP=1
+	fi
+fi
+
+# if using OpenBLAS, set USING_OPENMP to 1
+if [ "$USING_OPENBLAS" -eq 1 ]; then
+	USING_OPENMP=1
+fi
+
+if [ "$USING_MKL" -eq 1 ]; then
+	CC=${CC:-$(which icc)}
+	CXX=${CXX:-$(which icpc)}
+	#FC=${FC:-$(which ifort)}
+   FLAGS="$FLAGS -qopenmp -DNFFT4GP_USING_MKL -DNFFT4GP_USING_OPENMP"
+   FLAGSCPP="$FLAGSCPP -qopenmp -DNFFT4GP_USING_MKL -DNFFT4GP_USING_OPENMP"
+else
+	HCC=$(find /opt/homebrew/Cellar/gcc -type f -name 'gcc-*' -print -quit 2>/dev/null)
+	HXX=$(find /opt/homebrew/Cellar/gcc -type f -name 'g++-*' -print -quit 2>/dev/null)
+	if [ ! -z "$HCC" ] && [ ! -z "$HXX" ]; then
+		CC="$HCC"
+		CXX="$HXX"
+	else
+		CC=${CC:-$(which gcc || which cc || which clang)}
+		CXX=${CXX:-$(which g++ || which c++ || which clang++)}
+	fi
+fi
+if [ -z "$CC" ]; then
+	echo "C Compiler: not found, please set the CC environment variable."
+	exit 1
+fi
+if [ -z "$CXX" ]; then
+	echo "CXX Compiler: not found, please set the CXX environment variable."
+	exit 1
+fi
+#if [ -z "$FC" ]; then
+#	echo "Fortran Compiler: not found, please set the FC environment variable."
+#	exit 1
+#fi
+echo "C Compiler: $CC"
+echo "CXX Compiler: $CXX"
+#echo "Fortran Compiler: $FC"
+
+if [ "$USING_MKL" -eq 1 ]; then
+	# check if MKLROOT is set
+	if [ -z "$MKLROOT" ]; then
+		echo "MKLROOT: not found. please set MKLROOT environment variable."
+		exit 1
+	fi
+	echo "MKLROOT: $MKLROOT"
+   FLAGS="$FLAGS -qopenmp -DNFFT4GP_USING_MKL -DNFFT4GP_USING_OPENMP"
+   FLAGSCPP="$FLAGSCPP -qopenmp -DNFFT4GP_USING_MKL -DNFFT4GP_USING_OPENMP"
+	INCLAPACKBLAS="-I$MKLROOT/include"
+	LIBLAPACKBLAS="-L$MKLROOT/lib/intel64 -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -lm -ldl"
+else
+	if [ "$USING_OPENBLAS" -eq 1 ]; then
+		OPENBLAS_PATH=${OPENBLAS_PATH:-$(find "/opt/OpenBLAS" "$NFFTGP_DIR/../OpenBLAS" "$NFFTGP_DIR/../OpenBLAS-git" -maxdepth 1 -type d \( -name "build" -o -name "install" \) -print -quit 2>/dev/null)}
+		if [ -z "$OPENBLAS_PATH" ] || [ ! -d "$OPENBLAS_PATH" ] || [ ! -d "$OPENBLAS_PATH/include" ] || [ ! -d "$OPENBLAS_PATH/lib" ]; then
+			echo "OpenBLAS: not found. please set OPENBLAS_PATH environment variable (to the build directory cotaining include and lib)."
+			exit 1
+		fi
+		echo "OpenBLAS: $OPENBLAS_PATH"
+		INCLAPACKBLAS="-I$OPENBLAS_PATH/include"
+		LIBLAPACKBLAS="-L$OPENBLAS_PATH/lib -lopenblas"
+	else
+		# using system default LAPACK and BLAS
+		echo "Using system default LAPACK and BLAS."
+		INCLAPACKBLAS=""
+		LIBLAPACKBLAS="-llapack -lblas"
+	fi
+	# update flag if using OpenMP
+	if [ "$USING_OPENMP" -eq 1 ]; then
+		FLAGS="$FLAGS -fopenmp -DNFFT4GP_USING_OPENMP"
+		FLAGSCPP="$FLAGSCPP -fopenmp -DNFFT4GP_USING_OPENMP"
+	fi
+fi
+
+# Other settings
+LINK="$CC"
+LINKXX="$CXX"
+AR="ar crv"
+RANLIB="ranlib"
+
+
+# Generate Makefile.in
+cat > Makefile.in << EOF
+
+USING_OPENMP = $USING_OPENMP
+USING_OPENBLAS = $USING_OPENBLAS
+USING_MKL = $USING_MKL
+USING_NFFT = $USING_NFFT
+
+FLAGS := $FLAGS
+FLAGSCPP := $FLAGSCPP
+
+NFFT4GP_PATH = ./build
+NFFT_PATH = $NFFT_PATH
+NFFT_INSTALL_PATH = $NFFT_INSTALL_PATH
+FFTW_PATH = $FFTW_PATH
+
+INCLAPACKBLAS := $INCLAPACKBLAS
+LIBLAPACKBLAS := $LIBLAPACKBLAS
+
+CC := $CC
+CXX := $CXX
+#GFORTRAN := $FC
+LINK := $LINK
+LINKXX := $LINKXX
+AR := $AR
+RANLIB := $RANLIB
+
+EOF
+
+echo "Makefile.in generated."
+
+
+# Generate environment.sh to add LD_LIBRARY_PATH and DYLD_LIBRARY_PATH for OpenBLAS and AATGS
+cat > environment.sh << EOF
+export LD_LIBRARY_PATH=$NFFT_PATH/build/lib/:\$LD_LIBRARY_PATH
+export DYLD_LIBRARY_PATH=$NFFT_PATH/build/lib/:\$DYLD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$NFFTGP_DIR/build/lib/:\$LD_LIBRARY_PATH
+export DYLD_LIBRARY_PATH=$NFFTGP_DIR/build/lib/:\$DYLD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$OPENBLAS_PATH/lib/:\$LD_LIBRARY_PATH
+export DYLD_LIBRARY_PATH=$OPENBLAS_PATH/lib/:\$DYLD_LIBRARY_PATH
+EOF
+
+echo "environment.sh generated."

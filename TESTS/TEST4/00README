@@ -1,0 +1,6 @@
+Code for NFFT-accelerated additive kernel GP in Table 1 (our method, not baseline)
+
+Compile the code and execute the command as
+
+NFFT-accelerated additive kernel operators
+>> run2_tests.sh bike
