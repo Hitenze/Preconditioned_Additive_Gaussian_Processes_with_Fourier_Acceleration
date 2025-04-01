@@ -2,7 +2,7 @@
 
 ## Examples
 
-Loss extimation with additive GP:
+Test solve with AAFN:
 
 ```bash
 nfftgp.kernels.preconds.tests.test_solve_additive
